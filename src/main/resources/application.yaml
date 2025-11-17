@@ -1,0 +1,7 @@
+spring:
+  application.name: lighter
+  ai:
+    ollama:
+      chat:
+        options:
+          model: llama3.2
