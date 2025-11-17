@@ -1,16 +1,14 @@
 package com.teheidom.lighter.provider;
 
-import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.function.Function;
 
+import org.graalvm.polyglot.Context;
 import org.jsoup.Jsoup;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.ollama.OllamaChatModel;
-import org.springframework.stereotype.Component;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -66,6 +64,7 @@ public abstract class TelegramProvider implements Provider {
   @SneakyThrows
   public Object getData() {
     var doc = Jsoup.connect(BASE_URL + channelName).get();
+    Context context = Context.newBuilder("python").build();
 
     String text = doc.select(".js-widget_message").last().text();
     var rawResponse = ollama.call(new SystemMessage(basePrompt),
