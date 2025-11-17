@@ -28,34 +28,43 @@ public abstract class TelegramProvider implements Provider {
 
   private String basePrompt = """
 
-      You are an expert in text parsing and data extraction.
+      You are an expert in Python text parsing.
 
-      Your task:
-      - Read the text I provide.
-      - Find all schedule entries that follow the pattern: "Черга X.Y: HH-HH, HH-HH, ..."
-      - Extract:
-        - queue number (example: "1.1", "4.2", "6.1")
-        - list of all time intervals after the colon
+      Your task: generate a complete Python 3.11 script that extracts schedule information from a Telegram text message.
 
-      Output:
-      - Only a JSON array in the following format:
-      [
-        {
-          "queue": "1.1",
-          "intervals": ["00-02", "04-06", ...]
-        },
-        ...
-      ]
+      The script will be evaluated inside GraalPython, so it must obey the following strict rules:
 
-      Rules:
-      - Do not include explanations.
-      - Do not include text outside JSON.
-      - If the text contains unrelated words, emojis, links, or noise, ignore them.
+      REQUIREMENTS:
+      1. The script must use ONLY built-in modules: `re`, `json`.
+      2. The script must NOT import anything else.
+      3. The script must NOT print anything.
+      4. The script must NOT define a main() or call functions.
+      5. The script must NOT use "return" at top level.
+      6. The script must create a variable named RESULT containing a JSON string.
+      7. The script must assume the variable `text` already exists and contains the message to parse.
+      8. The script must extract all schedule entries of the form:
+           Черга X.Y: HH-HH, HH-HH, ...
+         Where:
+           - X.Y is the queue number (e.g. "1.1", "2.2")
+           - Intervals are a list of "HH-HH" items
+      9. The script must produce Python data in this form:
+           [
+             {"queue": "1.1", "intervals": ["00-02", "04-06", ...]},
+             ...
+           ]
+      10. Finally, the script must assign:
+           RESULT = json.dumps(parsed_data, ensure_ascii=False)
 
-      Here is the text:
+      OUTPUT RULES:
+      - Respond with ONLY the Python script.
+      - Do NOT wrap it in Markdown.
+      - Do NOT include explanations.
+      - Do NOT include backticks.
+      - Do NOT include comments.
+      - The output must be a valid script ready for execution.
 
-
-                  """;
+      Here is the text that will be available in a variable named `text`:
+                              """;
 
   @Setter
   private Function<String, String> extractor = Function.identity();
@@ -64,13 +73,15 @@ public abstract class TelegramProvider implements Provider {
   @SneakyThrows
   public Object getData() {
     var doc = Jsoup.connect(BASE_URL + channelName).get();
-    Context context = Context.newBuilder("python").build();
+    try (Context context = Context.newBuilder("python").build()) {
 
-    String text = doc.select(".js-widget_message").last().text();
-    var rawResponse = ollama.call(new SystemMessage(basePrompt),
-        new UserMessage(text));
-    var response = mapper.readValue(rawResponse, Queue[].class);
-    return new Schedule(channelName, ZonedDateTime.now(), List.of(response));
+      String text = doc.select(".js-widget_message").last().text();
+      var rawResponse = ollama.call(new SystemMessage(basePrompt),
+          new UserMessage(text));
+      var evaluated = context.eval("python", rawResponse).asString();
+      var response = mapper.readValue(evaluated, Queue[].class);
+      return new Schedule(channelName, ZonedDateTime.now(), List.of(response));
+    }
   }
 
   @Override
