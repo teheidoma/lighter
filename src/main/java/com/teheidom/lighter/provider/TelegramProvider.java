@@ -47,11 +47,14 @@ public abstract class TelegramProvider implements Provider {
          Where:
            - X.Y is the queue number (e.g. "1.1", "2.2")
            - Intervals are a list of "HH-HH" items
-      9. The script must produce Python data in this form:
-           [
-             {"queue": "1.1", "intervals": ["00-02", "04-06", ...]},
-             ...
-           ]
+      9. The script must produce Python data in this form (full JSON example):
+
+      [
+        {"queue": "1.1", "intervals": ["00-02", "04-06", "08-10"]},
+        {"queue": "2.2", "intervals": ["01-03", "05-07"]},
+        {"queue": "3.1", "intervals": ["02-04", "06-08", "10-12"]}
+      ]
+
       10. Finally, the script must assign:
            RESULT = json.dumps(parsed_data, ensure_ascii=False)
 
@@ -64,7 +67,7 @@ public abstract class TelegramProvider implements Provider {
       - The output must be a valid script ready for execution.
 
       Here is the text that will be available in a variable named `text`:
-                              """;
+                                    """;
 
   @Setter
   private Function<String, String> extractor = Function.identity();
@@ -73,13 +76,19 @@ public abstract class TelegramProvider implements Provider {
   @SneakyThrows
   public Object getData() {
     var doc = Jsoup.connect(BASE_URL + channelName).get();
-    try (Context context = Context.newBuilder("python").build()) {
 
-      String text = doc.select(".js-widget_message").last().text();
-      var rawResponse = ollama.call(new SystemMessage(basePrompt),
-          new UserMessage(text));
-      var evaluated = context.eval("python", rawResponse).asString();
-      var response = mapper.readValue(evaluated, Queue[].class);
+    String text = doc.select(".js-widget_message").last().text();
+    var rawResponse = ollama.call(new SystemMessage(basePrompt),
+        new UserMessage(text));
+    System.out.println("Raw response: " + rawResponse);
+    try (Context context = Context.newBuilder("python")
+        .allowAllAccess(true)
+        .build()) {
+      context.getBindings("python").putMember("text", text);
+      context.eval("python", rawResponse);
+      String asString = context.getBindings("python").getMember("RESULT").asString();
+      System.out.println("Extracted JSON: " + asString);
+      var response = mapper.readValue(asString, Queue[].class);
       return new Schedule(channelName, ZonedDateTime.now(), List.of(response));
     }
   }
