@@ -37,9 +37,7 @@ public class MainController {
     return providers.stream()
         .filter(provider -> provider.getName().equals(id))
         .findFirst()
-        .map(provider -> {
-          provider.getData().cast(Schedule.class);
-        }
+        .map(provider -> (Schedule) provider.getData())
         .orElseThrow();
   }
 
