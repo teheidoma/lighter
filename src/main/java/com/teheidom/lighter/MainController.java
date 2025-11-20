@@ -18,20 +18,26 @@ import lombok.RequiredArgsConstructor;
 public class MainController {
   private final List<Provider> providers;
 
+  @GetMapping(value = "/health", produces = "application/json")
+  public String health() {
+    return "{\"status\":\"UP\"}";
+  }
+
   @GetMapping(value = "/list", produces = "application/json")
-  public List<String> home() {
+  public List<String> list() {
     return providers.stream()
         .map(Provider::getName)
         .collect(Collectors.toList());
   }
 
-  @GetMapping(value = "/{id}", produces = "application/json")
-  public Object home(@PathVariable String id) {
+  @GetMapping(value = "/providers/{id}", produces = "application/json")
+  public Object getProvider(@PathVariable String id) {
     return providers.stream()
         .filter(provider -> provider.getName().equals(id))
         .findFirst()
         .map(Provider::getData)
-        .orElseThrow();
+        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Provider not found: " + id));
   }
 
   @GetMapping(value = "/remaining/{id}/{group}")
@@ -40,7 +46,8 @@ public class MainController {
         .filter(provider -> provider.getName().equals(id))
         .findFirst()
         .map(provider -> (Schedule) provider.getData())
-        .orElseThrow();
+        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Provider not found: " + id));
   }
 
   @GetMapping(value = "/countdown/{providerId}/{queueNumber}", produces = "application/json")
@@ -49,7 +56,8 @@ public class MainController {
         .filter(provider -> provider.getName().equals(providerId))
         .findFirst()
         .map(Provider::getData)
-        .orElseThrow(() -> new RuntimeException("Provider not found"));
+        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Provider not found: " + providerId));
 
     List<Queue> queues;
     if (data instanceof List<?>) {
@@ -66,33 +74,36 @@ public class MainController {
     Queue targetQueue = queues.stream()
         .filter(q -> q.queue().equals(queueNumber))
         .findFirst()
-        .orElseThrow(() -> new RuntimeException("Queue not found: " + queueNumber));
+        .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Queue not found: " + queueNumber));
 
     LocalTime now = LocalTime.now();
-    boolean isPowerOff = false;
-    LocalTime nextEventTime = null;
-    String nextEvent = null;
-
+    
     List<TimeInterval> intervals = targetQueue.intervals().stream()
         .map(TimeInterval::parse)
         .sorted((a, b) -> a.start().compareTo(b.start()))
         .toList();
 
+    boolean isPowerOff = false;
+    LocalTime nextEventTime = null;
+    String nextEvent = null;
+
     for (TimeInterval interval : intervals) {
-      if (now.isBefore(interval.start())) {
-        if (nextEventTime == null) {
-          nextEventTime = interval.start();
-          nextEvent = isPowerOff ? "POWER_ON" : "BLACKOUT_START";
-        }
-        break;
-      } else if (now.isBefore(interval.end()) || (interval.end().isBefore(interval.start()) && (now.isAfter(interval.start()) || now.isBefore(interval.end())))) {
+      boolean isInInterval;
+      if (interval.end().isBefore(interval.start())) {
+        isInInterval = now.isAfter(interval.start()) || now.isBefore(interval.end());
+      } else {
+        isInInterval = !now.isBefore(interval.start()) && now.isBefore(interval.end());
+      }
+
+      if (isInInterval) {
         isPowerOff = true;
-        if (interval.end().isBefore(interval.start())) {
-          nextEventTime = interval.end();
-        } else {
-          nextEventTime = interval.end();
-        }
+        nextEventTime = interval.end();
         nextEvent = "POWER_ON";
+        break;
+      } else if (now.isBefore(interval.start())) {
+        nextEventTime = interval.start();
+        nextEvent = "BLACKOUT_START";
         break;
       }
     }
@@ -122,10 +133,26 @@ public class MainController {
 
   private record TimeInterval(LocalTime start, LocalTime end) {
     static TimeInterval parse(String interval) {
-      String[] parts = interval.split("-");
-      LocalTime start = LocalTime.parse(parts[0], DateTimeFormatter.ofPattern("HH"));
-      LocalTime end = LocalTime.parse(parts[1], DateTimeFormatter.ofPattern("HH"));
-      return new TimeInterval(start, end);
+      try {
+        String[] parts = interval.split("-");
+        if (parts.length != 2) {
+          throw new IllegalArgumentException("Invalid interval format: " + interval);
+        }
+        
+        LocalTime start = parseTime(parts[0].trim());
+        LocalTime end = parseTime(parts[1].trim());
+        return new TimeInterval(start, end);
+      } catch (Exception e) {
+        throw new IllegalArgumentException("Failed to parse interval: " + interval, e);
+      }
+    }
+    
+    private static LocalTime parseTime(String time) {
+      try {
+        return LocalTime.parse(time + ":00", DateTimeFormatter.ofPattern("HH:mm"));
+      } catch (Exception e) {
+        return LocalTime.parse(time, DateTimeFormatter.ofPattern("HH:mm"));
+      }
     }
   }
 
